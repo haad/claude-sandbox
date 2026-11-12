@@ -1,0 +1,31 @@
+#!/bin/bash
+# Block commits that contain secrets. Installed via: git config core.hooksPath hooks
+set -euo pipefail
+
+if ! command -v gitleaks >/dev/null; then
+  echo "pre-commit: gitleaks not found (brew install gitleaks). Refusing to commit unchecked." >&2
+  exit 1
+fi
+
+# gitleaks parses raw git diff output; neutralise user config that breaks it
+# (color.diff=always, diff.mnemonicprefix=true, external diff tools)
+export GIT_CONFIG_COUNT=3
+export GIT_CONFIG_KEY_0=color.diff      GIT_CONFIG_VALUE_0=never
+export GIT_CONFIG_KEY_1=diff.mnemonicprefix GIT_CONFIG_VALUE_1=false
+export GIT_CONFIG_KEY_2=diff.external   GIT_CONFIG_VALUE_2=
+
+# 1. secret patterns in staged changes
+if ! gitleaks git --pre-commit --staged --redact --no-banner --exit-code 1; then
+  echo >&2
+  echo "pre-commit: possible secret in staged changes. Remove it, or if it is a" >&2
+  echo "documented placeholder add a 'gitleaks:allow' comment on that line." >&2
+  exit 1
+fi
+
+# 2. files that should never be committed regardless of content
+bad=$(git diff --cached --name-only --diff-filter=AM | grep -E '(^|/)(\.env(\..*)?|.*\.pem|.*\.key|.*\.p12|.*\.pfx|id_rsa.*|id_ed25519.*|.*\.kubeconfig|credentials|\.netrc|\.npmrc|\.pypirc)$' || true)
+if [ -n "$bad" ]; then
+  echo "pre-commit: refusing to commit credential-looking files:" >&2
+  echo "$bad" | sed 's/^/  /' >&2
+  exit 1
+fi

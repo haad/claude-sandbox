@@ -30,6 +30,7 @@ limit exactly that.
 | `Dockerfile` | `node:22-bookworm-slim` + Claude Code + `iptables-legacy` + `gosu`. The firewall entrypoint is embedded as a heredoc, so this is the only build input. |
 | `run.sh` | The single runner. All hardening lives here. Works from any shell or script. |
 | `sandbox.zsh` | Thin zsh functions over `run.sh` plus directory completion. |
+| `hooks/pre-commit` | gitleaks secret scan plus a credential-file blocklist. Tracked, enabled via `core.hooksPath`. |
 
 ## Setup
 
@@ -43,6 +44,10 @@ echo 'source /Volumes/Devel/apple/claude-sandbox/sandbox.zsh' >> ~/.zshrc && exe
 
 # 3. store a dedicated, spend-capped API key in Keychain (item "claude-sandbox")
 sbx-key
+
+# 4. enable the pre-commit secret scan for this clone
+brew install gitleaks
+git config core.hooksPath hooks
 ```
 
 ## Use
@@ -73,6 +78,31 @@ tempted to run.
 | `SANDBOX_ANTHROPIC_KEY` | Keychain | Overrides the Keychain lookup, for CI. |
 
 Example: `ALLOWED_HOSTS="api.anthropic.com github.com" sbx repo`
+
+## Pre-commit checks
+
+`hooks/pre-commit` refuses a commit when:
+
+- `gitleaks` finds a secret pattern in the staged diff (API keys, tokens,
+  private keys, connection strings, and the rest of its default ruleset);
+- a staged file looks like a credential by name: `.env*`, `*.pem`, `*.key`,
+  `*.p12`, `*.pfx`, `id_rsa*`, `id_ed25519*`, `*.kubeconfig`, `credentials`,
+  `.netrc`, `.npmrc`, `.pypirc`;
+- `gitleaks` is not installed. It fails closed rather than committing unchecked.
+
+For a documented placeholder, add a `gitleaks:allow` comment on that line.
+
+The hook overrides `color.diff`, `diff.mnemonicprefix` and `diff.external`
+for its own `git diff` call. gitleaks parses raw diff output and a global
+`color.diff=always` or mnemonic prefixes make it silently scan zero bytes
+and report "no leaks". Verify a scanner actually scanned something before
+trusting a clean result:
+
+```bash
+GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=color.diff GIT_CONFIG_VALUE_0=never \
+GIT_CONFIG_KEY_1=diff.mnemonicprefix GIT_CONFIG_VALUE_1=false \
+gitleaks git . --redact -v          # look at "scanned ~N bytes", not just "no leaks"
+```
 
 ## Caveats
 
