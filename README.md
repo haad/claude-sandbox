@@ -13,6 +13,8 @@ Tested on macOS 26 with `container` 1.1.0 (Homebrew).
 | Exfiltrate the API key or source over the network | In-guest iptables allowlist: DNS plus TCP 443 to `api.anthropic.com` only. Host gateway and other containers are blocked. |
 | Untrusted code disables the firewall | Rules are installed as root at start, then the process drops to `node` with no capabilities. |
 | Code tampers with files you later read or push | Source is bind-mounted read-only at `/work`. Claude writes to a separate `/out`. |
+| Clone-time attacks on host git (git-lfs smudge, submodule CVEs, pack parser bugs) | The clone runs inside a VM with egress to GitHub only. Host git never talks to the remote. |
+| Sandbox output attacks the host when read (symlink to `~/.ssh`, executables, `.claude`/`.git` hooks) | After every run the host deletes symlinks and special files, strips exec bits, sets the Gatekeeper quarantine flag, renames dot entries to `_dot_*` and makes the tree read-only. Verified. |
 | Persistence between runs | Read-only rootfs, `/tmp` and home on tmpfs, `--rm`. Every run is a clean slate. |
 | Stolen key has a wide blast radius | Dedicated API key in its own Console workspace with a hard spend cap, stored in macOS Keychain, never on the command line. |
 | Accidentally mounting your home or all your projects | `run.sh` refuses `/`, `/Users`, `/Volumes`, `$HOME`, system dirs, paths shallower than `/a/b/c/repo`, and any dir containing `.ssh`, `.aws`, `.gnupg` or `.kube`. |
@@ -28,8 +30,10 @@ limit exactly that.
 | File | Role |
 |---|---|
 | `Dockerfile` | `node:22-bookworm-slim` + Claude Code + `iptables-legacy` + `gosu`. The firewall entrypoint is embedded as a heredoc, so this is the only build input. |
-| `run.sh` | The single runner. All hardening lives here. Works from any shell or script. |
-| `sandbox.zsh` | Thin zsh functions over `run.sh` plus directory completion. |
+| `run.sh` | Runs a session: mount guards, Keychain key, per-run out dir, post-run hardening of `/out`. |
+| `clone.sh` | Clones a GitHub repo, all PR heads and PR metadata inside a VM, then hardens the result on the host. |
+| `lib.sh` | Shared: runtime checks and `sbx_harden_dir`, the host-side defang routine. Never follows symlinks. |
+| `sandbox.zsh` | Thin zsh functions over the scripts plus directory completion. |
 | `hooks/pre-commit` | gitleaks secret scan plus a credential-file blocklist. Tracked, enabled via `core.hooksPath`. |
 
 ## Setup
@@ -53,20 +57,49 @@ git config core.hooksPath hooks
 ## Use
 
 ```bash
-sbx-clone owner/repo          # clone, fetch every PR head as origin/pr/N, dump PR metadata to .pr-meta/
-sbx repo                      # Claude Code in the sandbox, repo read-only at /work
-sbx-shell repo                # same sandbox, bash instead of claude
+sbx-clone owner/repo          # inside a VM: clone, every PR head as origin/pr/N, PR metadata. -> ~/sandbox/src/<repo>
+sbx ~/sandbox/src/repo        # Claude Code in the sandbox: /work/repo (read-only) and /work/pr-meta
+sbx-shell ~/sandbox/src/repo  # same sandbox, bash instead of claude
 sbx-out                       # list output dirs, newest first
 sbx-build                     # rebuild after editing the Dockerfile
 ```
 
-Each run gets its own output dir, `~/sandbox/out/<repo>-<timestamp>`. Tell
+Each run gets its own output dir, `~/sandbox/out/<name>-<timestamp>`. Tell
 Claude to write findings to `/out`. If it needs to build or run tests, it can
-copy `/work` to `/tmp` inside the VM, which is tmpfs and vanishes on exit.
+copy `/work/repo` to `/tmp` inside the VM, which is tmpfs and vanishes on exit.
 
-Treat `out/` as untrusted too. A compromised session could plant a file with
-instructions aimed at your next Claude session, or a script you would be
-tempted to run.
+### What crosses the VM boundary, and how
+
+The host is a byte store. It never runs git, a package manager, an editor
+with plugins or Claude Code against anything a sandbox produced.
+
+- **Clone** happens in a throwaway container with `ALLOWED_HOSTS="github.com
+  api.github.com"` and no API key. GitHub's DNS rotates per query, so the
+  firewall uses GitHub's published `web`/`api`/`git` CIDRs, fetched from
+  `api.github.com/meta` before lockdown. git-lfs smudge is disabled, submodules
+  are not recursed. PR metadata comes from the REST API, unauthenticated
+  (60 requests/hour) unless `GITHUB_TOKEN` is set.
+- **After the clone and after every run**, `sbx_harden_dir` makes the written
+  tree inert for host tools: symlinks and non-regular files are deleted (a
+  sandbox can plant `report.md -> ~/.ssh/id_ed25519`, verified), exec bits are
+  stripped, every file gets `com.apple.quarantine`, the tree is `chmod -R a-w`.
+  For out dirs it additionally renames dot entries (`.claude`, `.git`,
+  `.envrc`, `.vscode`) to `_dot_*` so nothing auto-loads them.
+- **Nothing fires on `cd`.** Shell hooks like mise or direnv only act on
+  trusted config, but check `mise settings python.uv_venv_auto` if you keep
+  it on. Do not `cd` into sandbox trees with a git-aware prompt if you want
+  zero host parsing; use `sbx-shell` instead.
+
+Treat `~/sandbox/out` and `~/sandbox/src` as untrusted zones. Read them, never
+execute from them, never open them in Claude Code or an IDE on the host.
+
+### What persists between sessions
+
+Inside the VM nothing: read-only rootfs, tmpfs for `/tmp`, `/run` and home,
+`--rm`. Claude has no memory, no trusted-folder flag, no settings carry-over.
+Shared across sessions by design: the image, the API key (rotate it; a key
+leaked in one session is valid in every later one until you do), the
+read-only source tree, and the out dirs. Everything else is per run.
 
 ### Knobs
 
@@ -74,6 +107,8 @@ tempted to run.
 |---|---|---|
 | `ALLOWED_HOSTS` | `api.anthropic.com` | Space-separated hosts allowed on 443. Each one widens the exfil surface. |
 | `SBX_OUT_ROOT` | `~/sandbox/out` | Where per-run output dirs are created. |
+| `SBX_SRC_ROOT` | `~/sandbox/src` | Where `sbx-clone` puts repos. Keep it separate from your own projects. |
+| `GITHUB_TOKEN` | unset | Passed into the clone container only. Use a fine-grained read-only token or none. |
 | `SBX_CPUS`, `SBX_MEM` | `4`, `4g` | VM resources. |
 | `SANDBOX_ANTHROPIC_KEY` | Keychain | Overrides the Keychain lookup, for CI. |
 
@@ -111,8 +146,13 @@ gitleaks git . --redact -v          # look at "scanned ~N bytes", not just "no l
   covert channel. For truly hostile samples, run on a `container network
   create --internal` network and put an allowlisting HTTPS proxy on the host
   with `HTTPS_PROXY` set in the container. Untested here.
-- **Allowlist is resolved once at start.** If Anthropic's edge IPs rotate
-  mid-session, API calls fail closed. Restart the container.
+- **Allowlist is resolved once at start.** Non-GitHub hosts are resolved five
+  times and the answers unioned. If an edge IP rotates mid-session, API calls
+  fail closed. Restart the container.
+- **No disk quota on `/out`.** A hostile session can fill the disk. If that
+  matters, put `~/sandbox` on a fixed-size sparse bundle:
+  `hdiutil create -size 8g -type SPARSEBUNDLE -fs APFS -volname Sandbox ~/sandbox.sparsebundle`
+  and set `SBX_OUT_ROOT`/`SBX_SRC_ROOT` under `/Volumes/Sandbox`.
 - **`--dangerously-skip-permissions` is deliberate.** Permission prompts are a
   weak defence against prompt injection and make unattended analysis useless.
   The container is the control.

@@ -6,11 +6,11 @@
 # Key:   macOS Keychain item "claude-sandbox" (see sbx-key in sandbox.zsh),
 #        or SANDBOX_ANTHROPIC_KEY in the environment.
 # Env:   SBX_OUT_ROOT   host dir for per-run output   (default ~/sandbox/out)
-#        ALLOWED_HOSTS  extra egress, space separated  (default api.anthropic.com)
+#        ALLOWED_HOSTS  egress, space separated       (default api.anthropic.com)
 #        SBX_CPUS / SBX_MEM                           (default 4 / 4g)
 set -euo pipefail
+cd "$(dirname "$0")" && . ./lib.sh
 
-IMAGE=claude-sandbox
 SRC="${1:?usage: run.sh <untrusted-repo-dir> [claude args]}"; shift || true
 
 # --- guards -----------------------------------------------------------------
@@ -29,9 +29,7 @@ fi
 for f in .ssh .aws .gnupg .kube; do
   [ -e "$SRC/$f" ] && { echo "run.sh: '$SRC/$f' exists in the source dir, refusing" >&2; exit 1; }
 done
-
-container system status >/dev/null 2>&1 || { echo "run.sh: 'container system start' first" >&2; exit 1; }
-container image inspect "$IMAGE" >/dev/null 2>&1 || { echo "run.sh: image '$IMAGE' missing, run sbx-build" >&2; exit 1; }
+sbx_require_runtime
 
 # --- key: keychain first, env override, never on the command line -------------
 if [ -z "${SANDBOX_ANTHROPIC_KEY:-}" ]; then
@@ -47,8 +45,8 @@ OUT="$OUT_ROOT/$(basename "$SRC")-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$OUT"
 echo "sandbox: src=$SRC (ro)  out=$OUT  egress=${ALLOWED_HOSTS:-api.anthropic.com}" >&2
 
-TTY=(); [ -t 0 ] && [ -t 1 ] && TTY=(-it)
-exec container run ${TTY[@]+"${TTY[@]}"} --rm \
+rc=0
+container run $(sbx_tty) --rm \
   --dns 1.1.1.1 \
   --cap-add CAP_NET_ADMIN \
   --read-only --tmpfs /tmp --tmpfs /run --tmpfs /home/node \
@@ -57,4 +55,9 @@ exec container run ${TTY[@]+"${TTY[@]}"} --rm \
   --cpus "${SBX_CPUS:-4}" --memory "${SBX_MEM:-4g}" \
   -e ANTHROPIC_API_KEY \
   ${ALLOWED_HOSTS:+-e ALLOWED_HOSTS="$ALLOWED_HOSTS"} \
-  "$IMAGE" "$@"
+  "$IMAGE" "$@" || rc=$?
+
+# --- the sandbox wrote to $OUT: make it inert before anything on the host reads it
+sbx_harden_dir "$OUT" defang
+if [ -z "$(ls -A "$OUT")" ]; then rmdir "$OUT"; else echo "sandbox: output in $OUT (read-only, quarantined, dotfiles renamed _dot_*)" >&2; fi
+exit $rc

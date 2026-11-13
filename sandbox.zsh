@@ -24,31 +24,8 @@ sbx-key() {
     && echo "stored in Keychain as 'claude-sandbox'"
 }
 
-# sbx-clone <owner/repo|url> [dest]   clone + all PR heads + PR metadata
-sbx-clone() {
-  local repo="${1:?owner/repo or https url}" dest="${2:-}" slug
-  slug="${repo#https://github.com/}"; slug="${slug%.git}"; slug="${slug%/}"
-  [[ "$slug" == */* && "$slug" != *://* ]] || { echo "need owner/repo or https://github.com/owner/repo" >&2; return 1; }
-  dest="${dest:-${slug##*/}}"
-  [[ -e "$dest" ]] && { echo "'$dest' already exists" >&2; return 1; }
-
-  git clone --no-recurse-submodules "https://github.com/$slug.git" "$dest" || return 1
-  git -C "$dest" fetch origin '+refs/pull/*/head:refs/remotes/origin/pr/*'
-  echo "PR heads fetched: $(git -C "$dest" branch -r | grep -c 'origin/pr/')"
-
-  if command -v gh >/dev/null; then
-    mkdir -p "$dest/.pr-meta"
-    gh pr list -R "$slug" --state all --limit 1000 \
-      --json number,title,author,state,createdAt,headRefName,headRepository,body,url \
-      > "$dest/.pr-meta/pulls.json"
-    gh api --paginate "repos/$slug/pulls/comments"  > "$dest/.pr-meta/review-comments.json"
-    gh api --paginate "repos/$slug/issues/comments" > "$dest/.pr-meta/issue-comments.json"
-    echo "PR metadata in $dest/.pr-meta/"
-  else
-    echo "gh not installed, skipped PR metadata" >&2
-  fi
-  echo "next: sbx $dest"
-}
+# sbx-clone <owner/repo|url> [dest]   clone + all PR heads + PR metadata, inside a VM
+sbx-clone() { "$SBX_DIR/clone.sh" "$@"; }
 
 # sbx-out                        list run outputs, newest first
 sbx-out() { ls -1t "${SBX_OUT_ROOT:-$HOME/sandbox/out}"; }
