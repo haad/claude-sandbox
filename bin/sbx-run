@@ -1,7 +1,7 @@
 #!/bin/bash
 # Run Claude Code in a hardened Apple container against an untrusted repo.
 #
-#   run.sh <untrusted-repo-dir> [claude args | bash]
+#   sbx-run <untrusted-repo-dir> [claude args | bash]
 #
 # Key:   macOS Keychain item "claude-sandbox" (see sbx-key in sandbox.zsh),
 #        or SANDBOX_ANTHROPIC_KEY in the environment.
@@ -9,25 +9,25 @@
 #        ALLOWED_HOSTS  egress, space separated       (default api.anthropic.com)
 #        SBX_CPUS / SBX_MEM                           (default 4 / 4g)
 set -euo pipefail
-cd "$(dirname "$0")" && . ./lib.sh
+. "$(cd "$(dirname "$0")/../lib" && pwd)/lib.sh"
 
-SRC="${1:?usage: run.sh <untrusted-repo-dir> [claude args]}"; shift || true
+SRC="${1:?usage: sbx-run <untrusted-repo-dir> [claude args]}"; shift || true
 
 # --- guards -----------------------------------------------------------------
-[ -d "$SRC" ] || { echo "run.sh: '$SRC' is not a directory" >&2; exit 1; }
+[ -d "$SRC" ] || { echo "sbx-run: '$SRC' is not a directory" >&2; exit 1; }
 SRC="$(cd "$SRC" && pwd -P)"
 case "$SRC" in
   /|/Users|/Volumes|/Volumes/*/|"$HOME"|/System*|/private*|/etc*|/var*)
-    echo "run.sh: refusing to mount '$SRC' into an untrusted sandbox" >&2; exit 1;;
+    echo "sbx-run: refusing to mount '$SRC' into an untrusted sandbox" >&2; exit 1;;
 esac
 case "$HOME/" in "$SRC"/*)
-    echo "run.sh: '$SRC' contains your home directory, refusing" >&2; exit 1;;
+    echo "sbx-run: '$SRC' contains your home directory, refusing" >&2; exit 1;;
 esac
 if [ "$(echo "$SRC" | tr -cd / | wc -c)" -lt 4 ]; then
-  echo "run.sh: '$SRC' is too shallow (need at least /a/b/c/repo), refusing" >&2; exit 1
+  echo "sbx-run: '$SRC' is too shallow (need at least /a/b/c/repo), refusing" >&2; exit 1
 fi
 for f in .ssh .aws .gnupg .kube; do
-  [ -e "$SRC/$f" ] && { echo "run.sh: '$SRC/$f' exists in the source dir, refusing" >&2; exit 1; }
+  [ -e "$SRC/$f" ] && { echo "sbx-run: '$SRC/$f' exists in the source dir, refusing" >&2; exit 1; }
 done
 sbx_require_runtime
 
@@ -35,7 +35,7 @@ sbx_require_runtime
 if [ -z "${SANDBOX_ANTHROPIC_KEY:-}" ]; then
   SANDBOX_ANTHROPIC_KEY="$(security find-generic-password -s claude-sandbox -w 2>/dev/null || true)"
 fi
-[ -n "$SANDBOX_ANTHROPIC_KEY" ] || { echo "run.sh: no API key. Run 'sbx-key' to store one in Keychain." >&2; exit 1; }
+[ -n "$SANDBOX_ANTHROPIC_KEY" ] || { echo "sbx-run: no API key. Run 'sbx-key' to store one in Keychain." >&2; exit 1; }
 export ANTHROPIC_API_KEY="$SANDBOX_ANTHROPIC_KEY"
 unset SANDBOX_ANTHROPIC_KEY
 

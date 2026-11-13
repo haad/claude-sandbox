@@ -1,19 +1,20 @@
 # Claude sandbox helpers. Source from ~/.zshrc:
 #   export SBX_ROOT=/Volumes/Devel/sandbox      # optional, default ~/sandbox
-#   source /Volumes/Devel/apple/claude-sandbox/sandbox.zsh
+#   source ~/.claude-sandbox/lib/sandbox.zsh
 
-SBX_DIR="${0:A:h}"
+SBX_LIB="${0:A:h}"            # .../lib  (Dockerfile, lib.sh, this file)
+SBX_BIN="${SBX_LIB:h}/bin"    # .../bin  (sbx-run, sbx-clone)
 
 # sbx <repo-dir> [claude args]   run Claude Code in the sandbox against a repo
-sbx() { "$SBX_DIR/run.sh" "$@"; }
+sbx() { "$SBX_BIN/sbx-run" "$@"; }
 
 # sbx-shell <repo-dir>           same sandbox, plain bash instead of claude
-sbx-shell() { "$SBX_DIR/run.sh" "${1:?repo dir}" bash; }
+sbx-shell() { "$SBX_BIN/sbx-run" "${1:?repo dir}" bash; }
 
 # sbx-build                      rebuild the image after editing the Dockerfile
 sbx-build() {
   container builder status >/dev/null 2>&1 || container builder start --dns 1.1.1.1 --cpus 4 --memory 4g
-  container build -t claude-sandbox "$SBX_DIR"
+  container build -t claude-sandbox "$SBX_LIB"
 }
 
 # sbx-key                        store a dedicated, spend-capped API key in Keychain
@@ -26,7 +27,7 @@ sbx-key() {
 }
 
 # sbx-clone <owner/repo|url> [dest]   clone + all PR heads + PR metadata, inside a VM
-sbx-clone() { "$SBX_DIR/clone.sh" "$@"; }
+sbx-clone() { "$SBX_BIN/sbx-clone" "$@"; }
 
 # sbx-out                        list run outputs, newest first
 sbx-out() { ls -1t "${SBX_OUT_ROOT:-${SBX_ROOT:-$HOME/sandbox}/out}"; }

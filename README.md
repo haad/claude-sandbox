@@ -17,7 +17,7 @@ Tested on macOS 26 with `container` 1.1.0 (Homebrew).
 | Sandbox output attacks the host when read (symlink to `~/.ssh`, executables, `.claude`/`.git` hooks) | After every run the host deletes symlinks and special files, strips exec bits, sets the Gatekeeper quarantine flag, renames dot entries to `_dot_*` and makes the tree read-only. Verified. |
 | Persistence between runs | Read-only rootfs, `/tmp` and home on tmpfs, `--rm`. Every run is a clean slate. |
 | Stolen key has a wide blast radius | Dedicated API key in its own Console workspace with a hard spend cap, stored in macOS Keychain, never on the command line. |
-| Accidentally mounting your home or all your projects | `run.sh` refuses `/`, `/Users`, `/Volumes`, `$HOME`, system dirs, paths shallower than `/a/b/c/repo`, and any dir containing `.ssh`, `.aws`, `.gnupg` or `.kube`. |
+| Accidentally mounting your home or all your projects | `sbx-run` refuses `/`, `/Users`, `/Volumes`, `$HOME`, system dirs, paths shallower than `/a/b/c/repo`, and any dir containing `.ssh`, `.aws`, `.gnupg` or `.kube`. |
 | Resource abuse | CPU and memory caps (default 4 / 4g). |
 
 Apple `container` runs each container in its own lightweight VM, so the
@@ -27,36 +27,46 @@ limit exactly that.
 
 ## Files
 
+The repo layout is the install layout. `install.sh` copies `bin/` and `lib/`
+to `~/.claude-sandbox` (or a prefix you give it); re-run it to update.
+
 | File | Role |
 |---|---|
-| `Dockerfile` | `node:22-bookworm-slim` + Claude Code + `iptables-legacy` + `gosu`. The firewall entrypoint is embedded as a heredoc, so this is the only build input. |
-| `run.sh` | Runs a session: mount guards, Keychain key, per-run out dir, post-run hardening of `/out`. |
-| `clone.sh` | Clones a GitHub repo, all PR heads and PR metadata inside a VM, then hardens the result on the host. |
-| `lib.sh` | Shared: runtime checks and `sbx_harden_dir`, the host-side defang routine. Never follows symlinks. |
-| `sandbox.zsh` | Thin zsh functions over the scripts plus directory completion. |
+| `bin/sbx-run` | Runs a session: mount guards, Keychain key, per-run out dir, post-run hardening of `/out`. |
+| `bin/sbx-clone` | Clones a GitHub repo, all PR heads and PR metadata inside a VM, then hardens the result on the host. |
+| `lib/lib.sh` | Shared: `SBX_ROOT` paths, runtime checks and `sbx_harden_dir`, the host-side defang routine. Never follows symlinks. |
+| `lib/sandbox.zsh` | Thin zsh functions over the scripts plus directory completion. |
+| `lib/Dockerfile` | `node:22-bookworm-slim` + Claude Code + `iptables-legacy` + `gosu`. Firewall and in-VM clone script are embedded as heredocs, so this is the only build input. |
+| `install.sh` | Copies `bin/` and `lib/` to the prefix and prints the `.zshrc` lines. |
 | `hooks/pre-commit` | gitleaks secret scan plus a credential-file blocklist. Tracked, enabled via `core.hooksPath`. |
 
 ## Setup
 
 ```bash
-# 1. builder needs a DNS server if your host resolver is local-only (127.0.0.1, Tailscale)
-container builder start --dns 1.1.1.1 --cpus 4 --memory 4g
-container build -t claude-sandbox .
+# 1. install to ~/.claude-sandbox
+./install.sh
 
 # 2. shell integration. SBX_ROOT is the untrusted zone on the host, default ~/sandbox
 cat >> ~/.zshrc <<'EOF'
 export SBX_ROOT=/Volumes/Devel/sandbox
-source /Volumes/Devel/apple/claude-sandbox/sandbox.zsh
+source ~/.claude-sandbox/lib/sandbox.zsh
 EOF
 exec zsh
 
-# 3. store a dedicated, spend-capped API key in Keychain (item "claude-sandbox")
+# 3. build the image. The builder needs a DNS server if your host resolver is
+#    local-only (127.0.0.1, Tailscale); sbx-build starts it with one.
+sbx-build
+
+# 4. store a dedicated, spend-capped API key in Keychain (item "claude-sandbox")
 sbx-key
 
-# 4. enable the pre-commit secret scan for this clone
+# 5. developing the sandbox itself: enable the pre-commit secret scan in this clone
 brew install gitleaks
 git config core.hooksPath hooks
 ```
+
+Uninstall: `rm -rf ~/.claude-sandbox` and remove the two lines from `~/.zshrc`.
+The image stays until `container image rm claude-sandbox`.
 
 ## Use
 
@@ -163,7 +173,7 @@ gitleaks git . --redact -v          # look at "scanned ~N bytes", not just "no l
 - **Do not add `--cap-drop ALL`.** iptables fails at init even with
   `CAP_NET_ADMIN` re-added. Default caps plus `CAP_NET_ADMIN` work, and all
   caps are gone after the drop to `node` anyway.
-- **TTY.** `run.sh` passes `-it` only when stdin and stdout are terminals.
+- **TTY.** `sbx-run` passes `-it` only when stdin and stdout are terminals.
   `container` returns `ENOTSUP` if asked for a TTY without one.
 
 ## Verifying the sandbox

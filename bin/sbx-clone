@@ -2,20 +2,20 @@
 # Clone a GitHub repo, all PR heads and PR metadata, entirely inside a sandbox VM.
 # Host git never touches the remote. Result is read-only and quarantined on the host.
 #
-#   clone.sh <owner/repo | https://github.com/owner/repo> [dest-dir]
+#   sbx-clone <owner/repo | https://github.com/owner/repo> [dest-dir]
 #
 # Env: SBX_ROOT      default ~/sandbox (clone goes to $SBX_ROOT/src/<repo>)
 #      GITHUB_TOKEN  optional, raises API rate limit
 set -euo pipefail
-cd "$(dirname "$0")" && . ./lib.sh
+. "$(cd "$(dirname "$0")/../lib" && pwd)/lib.sh"
 
-repo="${1:?usage: clone.sh <owner/repo> [dest]}"
+repo="${1:?usage: sbx-clone <owner/repo> [dest]}"
 slug="${repo#https://github.com/}"; slug="${slug%.git}"; slug="${slug%/}"
-case "$slug" in */*) ;; *) echo "clone.sh: need owner/repo" >&2; exit 1;; esac
-case "$slug" in *://*|*..*|*/*/*) echo "clone.sh: bad slug '$slug'" >&2; exit 1;; esac
+case "$slug" in */*) ;; *) echo "sbx-clone: need owner/repo" >&2; exit 1;; esac
+case "$slug" in *://*|*..*|*/*/*) echo "sbx-clone: bad slug '$slug'" >&2; exit 1;; esac
 
 dest="${2:-$SBX_SRC_ROOT/${slug##*/}}"
-[ -e "$dest" ] && { echo "clone.sh: '$dest' already exists" >&2; exit 1; }
+[ -e "$dest" ] && { echo "sbx-clone: '$dest' already exists" >&2; exit 1; }
 sbx_require_runtime
 mkdir -p "$dest"; dest="$(cd "$dest" && pwd -P)"
 
@@ -32,6 +32,6 @@ container run $(sbx_tty) --rm \
   "$IMAGE" sbx-clone-inner "$slug" || rc=$?
 
 sbx_harden_dir "$dest"
-[ $rc -eq 0 ] || { echo "clone.sh: clone failed (exit $rc); '$dest' left read-only for inspection" >&2; exit $rc; }
+[ $rc -eq 0 ] || { echo "sbx-clone: clone failed (exit $rc); '$dest' left read-only for inspection" >&2; exit $rc; }
 echo "sandbox: repo at $dest/repo (read-only, quarantined), PR metadata in $dest/pr-meta" >&2
 echo "next: sbx $dest        (repo at /work/repo, metadata at /work/pr-meta)" >&2
