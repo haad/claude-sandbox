@@ -1,4 +1,5 @@
 # Claude sandbox helpers. Source from ~/.zshrc:
+#   export SBX_ROOT=/Volumes/Devel/sandbox      # optional, default ~/sandbox
 #   source /Volumes/Devel/apple/claude-sandbox/sandbox.zsh
 
 SBX_DIR="${0:A:h}"
@@ -28,7 +29,7 @@ sbx-key() {
 sbx-clone() { "$SBX_DIR/clone.sh" "$@"; }
 
 # sbx-out                        list run outputs, newest first
-sbx-out() { ls -1t "${SBX_OUT_ROOT:-$HOME/sandbox/out}"; }
+sbx-out() { ls -1t "${SBX_OUT_ROOT:-${SBX_ROOT:-$HOME/sandbox}/out}"; }
 
 # sbx-clean                      remove stopped sandbox containers (normally none, --rm)
 sbx-clean() { container ls -a 2>/dev/null | awk '$2 ~ /claude-sandbox/ && $5 != "running" {print $1}' | xargs -r container rm; }

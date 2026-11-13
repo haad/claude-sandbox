@@ -43,8 +43,12 @@ limit exactly that.
 container builder start --dns 1.1.1.1 --cpus 4 --memory 4g
 container build -t claude-sandbox .
 
-# 2. shell integration
-echo 'source /Volumes/Devel/apple/claude-sandbox/sandbox.zsh' >> ~/.zshrc && exec zsh
+# 2. shell integration. SBX_ROOT is the untrusted zone on the host, default ~/sandbox
+cat >> ~/.zshrc <<'EOF'
+export SBX_ROOT=/Volumes/Devel/sandbox
+source /Volumes/Devel/apple/claude-sandbox/sandbox.zsh
+EOF
+exec zsh
 
 # 3. store a dedicated, spend-capped API key in Keychain (item "claude-sandbox")
 sbx-key
@@ -57,14 +61,14 @@ git config core.hooksPath hooks
 ## Use
 
 ```bash
-sbx-clone owner/repo          # inside a VM: clone, every PR head as origin/pr/N, PR metadata. -> ~/sandbox/src/<repo>
-sbx ~/sandbox/src/repo        # Claude Code in the sandbox: /work/repo (read-only) and /work/pr-meta
-sbx-shell ~/sandbox/src/repo  # same sandbox, bash instead of claude
+sbx-clone owner/repo          # inside a VM: clone, every PR head as origin/pr/N, PR metadata. -> $SBX_ROOT/src/<repo>
+sbx $SBX_ROOT/src/repo        # Claude Code in the sandbox: /work/repo (read-only) and /work/pr-meta
+sbx-shell $SBX_ROOT/src/repo  # same sandbox, bash instead of claude
 sbx-out                       # list output dirs, newest first
 sbx-build                     # rebuild after editing the Dockerfile
 ```
 
-Each run gets its own output dir, `~/sandbox/out/<name>-<timestamp>`. Tell
+Each run gets its own output dir, `$SBX_ROOT/out/<name>-<timestamp>`. Tell
 Claude to write findings to `/out`. If it needs to build or run tests, it can
 copy `/work/repo` to `/tmp` inside the VM, which is tmpfs and vanishes on exit.
 
@@ -90,7 +94,7 @@ with plugins or Claude Code against anything a sandbox produced.
   it on. Do not `cd` into sandbox trees with a git-aware prompt if you want
   zero host parsing; use `sbx-shell` instead.
 
-Treat `~/sandbox/out` and `~/sandbox/src` as untrusted zones. Read them, never
+Treat everything under `$SBX_ROOT` as an untrusted zone. Read them, never
 execute from them, never open them in Claude Code or an IDE on the host.
 
 ### What persists between sessions
@@ -106,8 +110,8 @@ read-only source tree, and the out dirs. Everything else is per run.
 | Variable | Default | Effect |
 |---|---|---|
 | `ALLOWED_HOSTS` | `api.anthropic.com` | Space-separated hosts allowed on 443. Each one widens the exfil surface. |
-| `SBX_OUT_ROOT` | `~/sandbox/out` | Where per-run output dirs are created. |
-| `SBX_SRC_ROOT` | `~/sandbox/src` | Where `sbx-clone` puts repos. Keep it separate from your own projects. |
+| `SBX_ROOT` | `~/sandbox` | The untrusted zone. Clones go to `$SBX_ROOT/src`, run output to `$SBX_ROOT/out`. Keep it away from your own projects. |
+| `SBX_SRC_ROOT`, `SBX_OUT_ROOT` | derived | Override either half independently. |
 | `GITHUB_TOKEN` | unset | Passed into the clone container only. Use a fine-grained read-only token or none. |
 | `SBX_CPUS`, `SBX_MEM` | `4`, `4g` | VM resources. |
 | `SANDBOX_ANTHROPIC_KEY` | Keychain | Overrides the Keychain lookup, for CI. |
@@ -150,9 +154,9 @@ gitleaks git . --redact -v          # look at "scanned ~N bytes", not just "no l
   times and the answers unioned. If an edge IP rotates mid-session, API calls
   fail closed. Restart the container.
 - **No disk quota on `/out`.** A hostile session can fill the disk. If that
-  matters, put `~/sandbox` on a fixed-size sparse bundle:
+  matters, put `SBX_ROOT` on a fixed-size sparse bundle:
   `hdiutil create -size 8g -type SPARSEBUNDLE -fs APFS -volname Sandbox ~/sandbox.sparsebundle`
-  and set `SBX_OUT_ROOT`/`SBX_SRC_ROOT` under `/Volumes/Sandbox`.
+  and point `SBX_ROOT` at `/Volumes/Sandbox`.
 - **`--dangerously-skip-permissions` is deliberate.** Permission prompts are a
   weak defence against prompt injection and make unattended analysis useless.
   The container is the control.

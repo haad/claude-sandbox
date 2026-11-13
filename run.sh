@@ -5,7 +5,7 @@
 #
 # Key:   macOS Keychain item "claude-sandbox" (see sbx-key in sandbox.zsh),
 #        or SANDBOX_ANTHROPIC_KEY in the environment.
-# Env:   SBX_OUT_ROOT   host dir for per-run output   (default ~/sandbox/out)
+# Env:   SBX_ROOT       untrusted zone on the host     (default ~/sandbox, output in $SBX_ROOT/out)
 #        ALLOWED_HOSTS  egress, space separated       (default api.anthropic.com)
 #        SBX_CPUS / SBX_MEM                           (default 4 / 4g)
 set -euo pipefail
@@ -40,8 +40,7 @@ export ANTHROPIC_API_KEY="$SANDBOX_ANTHROPIC_KEY"
 unset SANDBOX_ANTHROPIC_KEY
 
 # --- per-run output dir -------------------------------------------------------
-OUT_ROOT="${SBX_OUT_ROOT:-$HOME/sandbox/out}"
-OUT="$OUT_ROOT/$(basename "$SRC")-$(date +%Y%m%d-%H%M%S)"
+OUT="$SBX_OUT_ROOT/$(basename "$SRC")-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$OUT"
 echo "sandbox: src=$SRC (ro)  out=$OUT  egress=${ALLOWED_HOSTS:-api.anthropic.com}" >&2
 

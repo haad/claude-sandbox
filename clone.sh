@@ -4,7 +4,8 @@
 #
 #   clone.sh <owner/repo | https://github.com/owner/repo> [dest-dir]
 #
-# Env: SBX_SRC_ROOT   default ~/sandbox/src        GITHUB_TOKEN  optional, raises API rate limit
+# Env: SBX_ROOT      default ~/sandbox (clone goes to $SBX_ROOT/src/<repo>)
+#      GITHUB_TOKEN  optional, raises API rate limit
 set -euo pipefail
 cd "$(dirname "$0")" && . ./lib.sh
 
@@ -13,7 +14,7 @@ slug="${repo#https://github.com/}"; slug="${slug%.git}"; slug="${slug%/}"
 case "$slug" in */*) ;; *) echo "clone.sh: need owner/repo" >&2; exit 1;; esac
 case "$slug" in *://*|*..*|*/*/*) echo "clone.sh: bad slug '$slug'" >&2; exit 1;; esac
 
-dest="${2:-${SBX_SRC_ROOT:-$HOME/sandbox/src}/${slug##*/}}"
+dest="${2:-$SBX_SRC_ROOT/${slug##*/}}"
 [ -e "$dest" ] && { echo "clone.sh: '$dest' already exists" >&2; exit 1; }
 sbx_require_runtime
 mkdir -p "$dest"; dest="$(cd "$dest" && pwd -P)"

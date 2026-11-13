@@ -2,6 +2,9 @@
 # Rule: the host stores bytes, it never interprets them. Nothing here follows symlinks.
 
 IMAGE=claude-sandbox
+SBX_ROOT="${SBX_ROOT:-$HOME/sandbox}"           # untrusted zone on the host
+SBX_SRC_ROOT="${SBX_SRC_ROOT:-$SBX_ROOT/src}"   # sbx-clone targets
+SBX_OUT_ROOT="${SBX_OUT_ROOT:-$SBX_ROOT/out}"   # per-run output dirs
 QUARANTINE='0081;00000000;claude-sandbox;'
 
 sbx_require_runtime() {
